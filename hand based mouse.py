@@ -10,8 +10,8 @@ mp_drawing = mp.solutions.drawing_utils
 hands = mp_hands.Hands(
     static_image_mode=False,
     max_num_hands=1,
-    min_detection_confidence=0.6,  # Reduced for speed
-    min_tracking_confidence=0.7    # Balanced for performance
+    min_detection_confidence=0.7,  # Increased for stability
+    min_tracking_confidence=0.8    # Increased for stability
 )
 
 # Simplified drawing styles (only key points)
@@ -24,15 +24,17 @@ cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
 screen_width, screen_height = pyautogui.size()
 pyautogui.FAILSAFE = False
 
-# Smoothing variables with lightweight approach
+# Smoothing variables with enhanced approach
 previous_smoothed_pos = None
-smoothing_factor = 0.2  # Fixed factor for simplicity
+smoothing_factor = 0.15  # Reduced for smoother movement
+position_history = []
+history_length = 5  # Number of frames for position averaging
 
 # Mouse control states
 click_state = False
 click_hold_frames = 0
-click_hold_threshold = 2
-click_cooldown = 4
+click_hold_threshold = 3  # Increased threshold
+click_cooldown = 5  # Increased cooldown
 click_cooldown_counter = 0
 drag_state = False
 
@@ -40,16 +42,40 @@ def calculate_distance(p1, p2):
     """Calculate Euclidean distance between two points"""
     return np.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
 
-def smooth_position(current_raw_pos, previous_smoothed_pos):
-    """Lightweight exponential smoothing"""
+def smooth_position(current_raw_pos, previous_smoothed_pos, position_history):
+    """Enhanced position smoothing with acceleration handling"""
     if previous_smoothed_pos is None:
         return current_raw_pos
     
+    # Add current position to history
+    position_history.append(current_raw_pos)
+    if len(position_history) > history_length:
+        position_history.pop(0)
+    
+    # Calculate average position from history
+    avg_x = sum(pos[0] for pos in position_history) / len(position_history)
+    avg_y = sum(pos[1] for pos in position_history) / len(position_history)
+    
+    # Calculate velocity
+    velocity_x = current_raw_pos[0] - previous_smoothed_pos[0]
+    velocity_y = current_raw_pos[1] - previous_smoothed_pos[1]
+    
+    # Adjust smoothing factor based on velocity
+    dynamic_smoothing = smoothing_factor * (1 + 0.5 * (abs(velocity_x) + abs(velocity_y)))
+    dynamic_smoothing = min(0.5, max(0.1, dynamic_smoothing))
+    
+    # Apply smoothing
     smoothed_pos = (
-        smoothing_factor * current_raw_pos[0] + (1 - smoothing_factor) * previous_smoothed_pos[0],
-        smoothing_factor * current_raw_pos[1] + (1 - smoothing_factor) * previous_smoothed_pos[1]
+        dynamic_smoothing * avg_x + (1 - dynamic_smoothing) * previous_smoothed_pos[0],
+        dynamic_smoothing * avg_y + (1 - dynamic_smoothing) * previous_smoothed_pos[1]
     )
     return smoothed_pos
+
+def calculate_stable_pinch(index_pos, thumb_pos, hand_size, history_length=3):
+    """Calculate pinch distance with temporal stability"""
+    distance = calculate_distance(index_pos, thumb_pos)
+    normalized_distance = distance / hand_size
+    return normalized_distance
 
 # Minimal instructions
 print("\n=== Hand Gesture Mouse ===")
@@ -111,19 +137,24 @@ while cap.isOpened():
             mouse_x = np.interp(x, [padding, image_width - padding], [0, screen_width])
             mouse_y = np.interp(y, [padding, image_height - padding], [0, screen_height])
             
-            # Smooth position
+            # Move mouse with enhanced smoothing
             current_raw_pos = (mouse_x, mouse_y)
-            smoothed_pos = smooth_position(current_raw_pos, previous_smoothed_pos)
+            smoothed_pos = smooth_position(current_raw_pos, previous_smoothed_pos, position_history)
             previous_smoothed_pos = smoothed_pos
             
-            # Move mouse
-            smooth_x = max(0, min(int(smoothed_pos[0]), screen_width - 1))
-            smooth_y = max(0, min(int(smoothed_pos[1]), screen_height - 1))
-            pyautogui.moveTo(smooth_x, smooth_y)
+            # Add deadzone for small movements
+            movement_threshold = 2
+            if abs(smoothed_pos[0] - pyautogui.position()[0]) > movement_threshold or \
+               abs(smoothed_pos[1] - pyautogui.position()[1]) > movement_threshold:
+                smooth_x = max(0, min(int(smoothed_pos[0]), screen_width - 1))
+                smooth_y = max(0, min(int(smoothed_pos[1]), screen_height - 1))
+                pyautogui.moveTo(smooth_x, smooth_y)
             
-            # Pinch detection
-            pinch_distance = calculate_distance((x, y), (thumb_x, thumb_y))
-            pinch_threshold = hand_size * 0.25
+            # Enhanced pinch detection
+            pinch_distance = calculate_stable_pinch(
+                (x, y), (thumb_x, thumb_y), hand_size
+            )
+            pinch_threshold = 0.3  # Normalized threshold
             
             # Simplified pinch visualization
             mid_x, mid_y = (x + thumb_x) // 2, (y + thumb_y) // 2
