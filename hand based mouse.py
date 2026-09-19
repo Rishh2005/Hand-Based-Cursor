@@ -72,7 +72,6 @@ def smooth_position(current_raw_pos, previous_smoothed_pos, position_history):
     return smoothed_pos
 
 def calculate_stable_pinch(index_pos, thumb_pos, hand_size, history_length=3):
-    """Calculate pinch distance with temporal stability"""
     distance = calculate_distance(index_pos, thumb_pos)
     normalized_distance = distance / hand_size
     return normalized_distance
